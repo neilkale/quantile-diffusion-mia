@@ -1,0 +1,32 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "quantile_diffusion_mia"
+version = "0.0.1"
+description = "Extending quantile regression-based membership inference attacks on diffusion models to censored or modified images."
+authors = [
+  { name = "Neil Kale" },
+]
+
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    
+]
+requires-python = "~=3.10"
+
+[tool.black]
+line-length = 99
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+)/
+'''
+
+[tool.ruff.lint.isort]
+known_first_party = ["quantile_diffusion_mia"]
+force_sort_within_sections = true
