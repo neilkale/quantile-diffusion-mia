@@ -29,6 +29,7 @@ def noise_and_denoise(
 
     for batch_idx, x in enumerate(tqdm(data_loader)):
         x = x[0].cuda()
+        x = x * 2 - 1
 
         x_sec = ddim_multistep(model, flags, x, t_c=0, target_steps=target_steps)
         x_sec = x_sec['x_t_target']
@@ -45,6 +46,7 @@ def noise_and_denoise(
     logger.success("Noise and denoise complete.")
 
     return {
+        'noised_images': torch.concat(internal_diffusion_list),
         'reconstructed_images': torch.concat(internal_denoised_list),
         't_errors': torch.concat(t_errors_list)
     }

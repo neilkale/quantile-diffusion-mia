@@ -29,12 +29,15 @@ DATASET_CONFIG = {
         'image_size': (32, 32),
         'channels': 3,
         'batch_size': 128,
+        'num_workers': 2,
+        'normalization_transform': [(0, 0, 0), (1, 1, 1)],
         'diffusion_model_path': 'models/ddpm-CIFAR10/checkpoint.pt',
         'diffusion_model_flag_path': 'models/ddpm-CIFAR10/flagfile.txt',
         'diffusion_model_split_path': 'models/ddpm-CIFAR10/CIFAR10_train_ratio0.5.npz',
         'quantile_regression_data_path': 'data/processed/CIFAR10/combined_dataset.pt',
         'quantile_regression_split_path': 'data/interim/CIFAR10_quantile_split.npz',
-        'quantile_regression_model_path': 'models/qr-CIFAR10/alpha{alpha}_checkpoint.pt'
+        'quantile_regression_model_path': 'models/qr-CIFAR10/alpha{alpha}_attacker{attacker}_checkpoint.pt',
+        'quantile_regression_model_log_path': 'models/qr-CIFAR10/logs/alpha{alpha}_attacker{attacker}_checkpoint.npy',
     },
     'CIFAR100': {
         'data_path': 'data/raw/cifar100/',
@@ -42,29 +45,38 @@ DATASET_CONFIG = {
         'image_size': (32, 32),
         'channels': 3,
         'batch_size': 128,
+        'num_workers': 4,
+        'normalization_transform': [(0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)],
         'diffusion_model_path': 'models/ddpm-CIFAR100/checkpoint.pt',
         'diffusion_model_flag_path': 'models/ddpm-CIFAR100/flagfile.txt',
         'diffusion_model_split_path': 'models/ddpm-CIFAR100/CIFAR100_train_ratio0.5.npz',
         'quantile_regression_data_path': 'data/processed/CIFAR100/combined_dataset.pt',
         'quantile_regression_split_path': 'models/interim/CIFAR100_quantile_split.npz',
-        'quantile_regression_model_path': 'models/qr-CIFAR100/alpha{alpha}_checkpoint.pt'
+        'quantile_regression_model_path': 'models/qr-CIFAR10/alpha{alpha}_attacker{attacker}_checkpoint.pt',
+        'quantile_regression_model_log_path': 'models/qr-CIFAR100/logs/alpha{alpha}_attacker{attacker}_checkpoint.npy',
     },
 }
 
 MODEL_CONFIG = {
     'CIFAR10_QUANTILE': {
-        'n_epochs': 50,
+        'n_epochs': 15,
+        'resnet_channel_reduce': 16,
         'lr': 1e-3,
         'momentum': 0.9,
+        'nesterov': True,
         'weight_decay': 5e-4,
         'batch_size': 128,
+        'num_workers': 2
     },
     'CIFAR100_QUANTILE': {
-        'n_epochs': 15,
+        'n_epochs': 150,
+        'resnet_channel_reduce': 16,
         'lr': 1e-3,
         'momentum': 0.9,
+        'nesterov': True,
         'weight_decay': 5e-4,
         'batch_size': 128,
+        'num_workers': 4
     }
 }
 

@@ -7,7 +7,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 from torchvision.datasets import CIFAR10, CIFAR100
 
 from quantile_diffusion_mia.config import PROCESSED_DATA_DIR, RAW_DATA_DIR, INTERIM_DATA_DIR, DATASET_CONFIG
@@ -30,11 +30,11 @@ class QuantileRegressionDataset(Dataset):
         if augment:
             self.transform = transforms.Compose([
                 transforms.RandAugment(num_ops=5),
-                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
             ])
         else:
             self.transform = transforms.Compose([
-                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
     def __len__(self):
@@ -45,9 +45,6 @@ class QuantileRegressionDataset(Dataset):
         actual_idx = self.indices[idx]
         original_image = self.original_images[actual_idx]
 
-        # Apply transforms to the original image
-        original_image = self.transform(original_image)
-
         # Get reconstructed image and t_error if they exist
         if self.reconstructed_images is not None:
             reconstructed_image = self.reconstructed_images[actual_idx]
@@ -56,6 +53,7 @@ class QuantileRegressionDataset(Dataset):
 
         if self.t_errors is not None:
             t_error = self.t_errors[actual_idx]
+            t_error = -torch.log(t_error)
         else:
             t_error = 0
 
@@ -98,11 +96,11 @@ class QuantileRegressionDataset(Dataset):
         )   
 
 @app.command()
-def load_reconstructed_images_and_t_errors(dataset_name: str, dataset, dt: int = 1, steps: int = 50, device: str = 'cuda'):
+def load_reconstructed_images_and_t_errors(dataset_name: str, dataset, dt: int = 1, steps: int = 50, device: str = 'cuda', reload: bool = False):
     # Load reconstructed images and t_errors if they exist
     config = DATASET_CONFIG[dataset_name]
     output_path = PROCESSED_DATA_DIR / f'{dataset_name}' / f't{steps}' / 'reconstructed_images_and_t_errors.pt'
-    if output_path.exists():
+    if not reload and output_path.exists():
         logger.info(f'Loading existing t={steps} reconstructed images and t_errors for {dataset_name} at {output_path}')
         return torch.load(output_path, weights_only=True)
 
@@ -117,14 +115,15 @@ def load_reconstructed_images_and_t_errors(dataset_name: str, dataset, dt: int =
     logger.success('Diffusion model loaded successfully')
 
     # Create a DataLoader for the dataset
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=config['batch_size'], shuffle=False, num_workers=4)
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers'], pin_memory=True)
 
     # Generate reconstructed images and t_errors
-    logger.info(f'Generating reconstructed images for {dataset_name}')
+    logger.info(f'Generating noised and reconstructed images for {dataset_name}')
     output = noise_and_denoise(data_loader, model=model, dt=dt, steps=steps, flags=flags)
+    noised_images = output['noised_images']
     reconstructed_images = output['reconstructed_images']
     t_errors = output['t_errors']
-    logger.success(f'Reconstructed images generated successfully')
+    logger.success(f'Noised images and reconstructed images generated successfully')
     
     # Save the reconstructed images and t_errors
     output_path = PROCESSED_DATA_DIR / f'{dataset_name}' / f't{steps}' / 'reconstructed_images_and_t_errors.pt'
@@ -132,27 +131,28 @@ def load_reconstructed_images_and_t_errors(dataset_name: str, dataset, dt: int =
         logger.info(f'Creating directory {output_path.parent}')
         output_path.parent.mkdir(parents=True, exist_ok=True)
         logger.success(f'Directory created successfully')
-    logger.info(f'Saving reconstructed images and t_errors to {output_path}')
-    torch.save({'reconstructed_images': reconstructed_images, 't_errors': t_errors}, output_path)
+    logger.info(f'Saving noised images, reconstructed images and t_errors to {output_path}')
+    torch.save({'noised_images': noised_images, 'reconstructed_images': reconstructed_images, 't_errors': t_errors}, output_path)
 
-    return {'reconstructed_images': reconstructed_images, 't_errors': t_errors}
+    return {'noised_images': noised_images, 'reconstructed_images': reconstructed_images, 't_errors': t_errors}
     
 @app.command()
-def create_quantileregression_dataset(dataset_name: str, dt: int = 1, steps: int = 50, augment: bool = False, device: str = 'cuda', random_seed: int = 42):
+def create_quantileregression_dataset(dataset_name: str, dt: int = 1, steps: int = 50, augment: bool = False, device: str = 'cuda', random_seed: int = 42, reload: bool = False):
+    config = DATASET_CONFIG[dataset_name]
     # Fix seed for reproducibility
     fix_seed(random_seed)
 
-    # Set transforms based on augmentation flag
+    # Set transforms based on augmentation flag``
     if augment:
         transform = transforms.Compose([
             transforms.RandAugment(num_ops=5),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            # transforms.Normalize(*config['normalization_transform']) # This is not used for training the diffusion models, so we omit here too
         ])
     else:
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            # transforms.Normalize(*config['normalization_transform']) # This is not used for training the diffusion models, so we omit here too
         ])
 
     # Load dataset based on the dataset_name
@@ -166,18 +166,19 @@ def create_quantileregression_dataset(dataset_name: str, dt: int = 1, steps: int
     # You can add support for more datasets here.
 
     # Load reconstructed_images and t_errors
-    output = load_reconstructed_images_and_t_errors(dataset_name, dataset, dt=dt, steps=steps, device=device)
-    logger.success("Loaded reconstructed images and t_errors")
+    output = load_reconstructed_images_and_t_errors(dataset_name, dataset, dt=dt, steps=steps, device=device, reload=reload)
+    logger.success("Loaded noised images, reconstructed images, and t_errors")
+    noised_images = output['noised_images'].cpu()
     reconstructed_images = output['reconstructed_images'].cpu()
     t_errors = output['t_errors'].cpu()
 
-    # Load the dataset with the specified indices and apply augmentation if requested
-    logger.info(f'Transforming original images for {dataset_name}')
-    original_images = []
-    for idx in tqdm(range(len(dataset))):
-        original_images.append(transform(dataset.data[idx]))
-    original_images = torch.stack(original_images).cpu()
-    logger.success(f'Original images transformed successfully')
+    # # Load the dataset with the specified indices and apply augmentation if requested
+    # logger.info(f'Transforming original images for {dataset_name}')
+    # original_images = []
+    # for idx in tqdm(range(len(dataset))):
+    #     original_images.append(transform(dataset.data[idx]))
+    # original_images = torch.stack(original_images).cpu()
+    # logger.success(f'Original images transformed successfully')
 
     # Load the labels
     train_indices_path = config['diffusion_model_split_path']
@@ -187,7 +188,7 @@ def create_quantileregression_dataset(dataset_name: str, dt: int = 1, steps: int
     labels = ['member' if idx in member_indices else 'nonmember' for idx in range(len(dataset))]
     logger.success(f'Diffusion model membership labels loaded successfully')
 
-    dataset = QuantileRegressionDataset(dataset_name, original_images=original_images, reconstructed_images=reconstructed_images, t_errors=t_errors, labels=labels, augment=augment)
+    dataset = QuantileRegressionDataset(dataset_name, original_images=noised_images, reconstructed_images=reconstructed_images, t_errors=t_errors, labels=labels, augment=augment)
     
     # Save the combined dataset
     output_path = PROCESSED_DATA_DIR / f'{dataset_name}' / f'combined_dataset.pt'
