@@ -53,7 +53,7 @@ class QuantileRegressionDataset(Dataset):
 
         if self.t_errors is not None:
             t_error = self.t_errors[actual_idx]
-            t_error = -torch.log(t_error)
+            t_error = -torch.log10(t_error)
         else:
             t_error = 0
 
@@ -142,7 +142,7 @@ def create_quantileregression_dataset(dataset_name: str, dt: int = 1, steps: int
     # Fix seed for reproducibility
     fix_seed(random_seed)
 
-    # Set transforms based on augmentation flag``
+    # Set transforms based on augmentation flag
     if augment:
         transform = transforms.Compose([
             transforms.RandAugment(num_ops=5),
@@ -197,7 +197,7 @@ def create_quantileregression_dataset(dataset_name: str, dt: int = 1, steps: int
     logger.success(f'Combined dataset saved successfully')
 
     # Split the dataset into train and evaluation sets
-    split_quantile_regression_dataset(dataset_name)
+    split_quantile_regression_dataset(dataset_name, train_split=0.8)
 
 
 

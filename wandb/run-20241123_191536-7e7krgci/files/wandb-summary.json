@@ -1,0 +1,1 @@
+{"test_fpr":0.0034000000450760126,"_timestamp":1.7323893477928686e+09,"test_tpr":0.02759999968111515,"_step":2,"_wandb":{"runtime":12},"train_loss":2.3318496670544553,"test_loss":0.011693232277450578,"learning_rate":0.001,"train_fpr":0.6061499714851379,"_runtime":10.741036123,"train_tpr":0}

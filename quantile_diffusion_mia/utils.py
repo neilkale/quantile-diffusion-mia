@@ -136,3 +136,15 @@ def ddim_multistep(model, FLAGS, x, t_c, target_steps, clip=False, device='cuda'
         result['x_t_target'] = torch.clip(result['x_t_target'], -1, 1)
 
     return result
+
+# Define a quantile loss function
+def quantile_loss(predictions, targets, qs):
+    qs = 1 - qs
+    # Expand dimensions to align predictions/targets with quantiles
+    targets = targets.unsqueeze(1)  
+    errors = targets - predictions  # Shape: (batch_size, num_quantiles)
+    qs = qs.view(1, -1)  # Shape: (1, num_quantiles)
+    # Compute quantile losses for all quantiles in a single operation
+    losses = torch.max((qs - 1) * errors, qs * errors)
+    # Mean across batch dimension
+    return losses.mean()  # Returns a single value for loss    

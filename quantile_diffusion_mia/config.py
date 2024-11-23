@@ -34,10 +34,12 @@ DATASET_CONFIG = {
         'diffusion_model_path': 'models/ddpm-CIFAR10/checkpoint.pt',
         'diffusion_model_flag_path': 'models/ddpm-CIFAR10/flagfile.txt',
         'diffusion_model_split_path': 'models/ddpm-CIFAR10/CIFAR10_train_ratio0.5.npz',
-        'quantile_regression_data_path': 'data/processed/CIFAR10/combined_dataset.pt',
-        'quantile_regression_split_path': 'data/interim/CIFAR10_quantile_split.npz',
-        'quantile_regression_model_path': 'models/qr-CIFAR10/alpha{alpha}_attacker{attacker}_checkpoint.pt',
-        'quantile_regression_model_log_path': 'models/qr-CIFAR10/logs/alpha{alpha}_attacker{attacker}_checkpoint.npy',
+        # 'quantile_regression_data_path': 'data/processed/CIFAR10/combined_dataset.pt',
+        # 'quantile_regression_split_path': 'data/interim/CIFAR10_quantile_split.npz',
+        'quantile_regression_data_path': 'data/processed/CIFAR10/secmi_combined_dataset_CIFAR10_dt1_t50.pt',  # Use the data from SecMI
+        'quantile_regression_split_path': 'data/interim/secmi_CIFAR10_quantile_split.npz',  # Use the split from SecMI
+        'quantile_regression_model_path': 'models/qr-CIFAR10/secmi_alpha{alpha}_attacker{attacker}_checkpoint.pt', # Save the model for SecMI data
+        'quantile_regression_model_log_path': 'models/qr-CIFAR10/logs/secmi_alpha{alpha}_attacker{attacker}_checkpoint.npy', # Log the model for SecMI data
     },
     'CIFAR100': {
         'data_path': 'data/raw/cifar100/',
@@ -59,24 +61,38 @@ DATASET_CONFIG = {
 
 MODEL_CONFIG = {
     'CIFAR10_QUANTILE': {
-        'n_epochs': 15,
-        'resnet_channel_reduce': 16,
+        'n_epochs': 1000,
+        'resnet_channel_reduce': 1,
         'lr': 1e-3,
         'momentum': 0.9,
         'nesterov': True,
         'weight_decay': 5e-4,
+
         'batch_size': 128,
-        'num_workers': 2
+        'num_workers': 2,
+        'eval_batch_size': 2048,
+        'num_eval_workers': 4,
+
+        'alpha_min': 1e-8, 
+        'alpha_max': 1e-1, 
+        'num_quantiles': 300,
+        'target_alpha': 1e-2,
+        'num_attackers': 7,
     },
     'CIFAR100_QUANTILE': {
-        'n_epochs': 150,
-        'resnet_channel_reduce': 16,
+        'n_epochs': 200,
+        'resnet_channel_reduce': 64,
         'lr': 1e-3,
         'momentum': 0.9,
         'nesterov': True,
         'weight_decay': 5e-4,
         'batch_size': 128,
-        'num_workers': 4
+        'num_workers': 4,
+        'alpha_min': 1e-8, 
+        'alpha_max': 1e-1, 
+        'num_quantiles': 300,
+        'target_alpha': 1e-2,
+        'num_attackers': 7,
     }
 }
 
