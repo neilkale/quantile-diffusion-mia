@@ -6,19 +6,75 @@ from loguru import logger
 from tqdm import tqdm
 from typing import List
 import wandb
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmRestarts
 
 from quantile_diffusion_mia.config import MODELS_DIR, PROCESSED_DATA_DIR, DATASET_CONFIG, MODEL_CONFIG
 from quantile_diffusion_mia.dataset import QuantileRegressionDataset
 from quantile_diffusion_mia.modeling.resnet import ResNet18
 from quantile_diffusion_mia.utils import quantile_loss
+from itertools import product
 
 app = typer.Typer()
 wandb.login()
+
+def worker(task_id, params, dataset_name):
+    """Worker function to train a single configuration."""
+    lr, weight_decay, batch_size, target_alpha, num_alpha, optimizer, scheduler, resnet_channel_reduce = params
+
+    # Update model config for this task
+    MODEL_CONFIG[f'{dataset_name}_QUANTILE'].update({
+        "num_attackers": 1,
+        "lr": lr,
+        "weight_decay": weight_decay,
+        "batch_size": batch_size,
+        "target_alpha": target_alpha,
+        "num_quantiles": num_alpha,
+        "optimizer": optimizer,
+        "scheduler": scheduler,
+        "resnet_channel_reduce": resnet_channel_reduce
+    })
+
+    # Assign a specific GPU based on the task ID
+    gpu_id = task_id % 2 + 2 # torch.cuda.device_count()
+    torch.cuda.set_device(gpu_id)
+
+    logger.info(f"Running task {task_id} on GPU {gpu_id} with config: {MODEL_CONFIG[f'{dataset_name}_QUANTILE']}")
+    
+    # Call your training function
+    create_quantile_bag(dataset_name, retrain=True)
+    return task_id
+
+@app.command()
+def hyperparameter_grid_search(dataset_name: str):
+    param_grid = {
+        "lr": [1e-3, 1e-4],
+        "weight_decay": [1e-4, 1e-5],
+        "batch_size": [32, 64],
+        "target_alpha": [0.001, 0.005, 0.01],
+        "num_alpha": [10, 50, 100],
+        "optimizer": ['adam', 'adamw'],
+        "scheduler": ['cosine', 'cosine_warm_restarts'],
+        "resnet_channel_reduce": [1, 2, 4]
+    }
+
+    param_combinations = list(product(*param_grid.values()))
+
+    # Parallel execution using ProcessPoolExecutor
+    max_workers = min(20, len(param_combinations))  # Limit to 100 tasks
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for task_id, params in enumerate(param_combinations):
+            futures.append(executor.submit(worker, task_id, params, dataset_name))
+        
+        for future in tqdm(futures, desc="Hyperparameter Grid Search"):
+            future.result()  # Wait for each task to complete
+
+    logger.info("Hyperparameter grid search completed.")
 
 @app.command()
 def create_quantile_bag(dataset_name: str, device: str = 'cuda', random_seed: int = 42, retrain: bool = False):
@@ -101,7 +157,14 @@ def compute_tpr_fpr(predictions, targets, labels, alpha_index, device='cuda'):
     else:
         tpr = torch.sum((membership_pred == 1) & (labels == 1)) / total_positives
 
-    return tpr, fpr
+    # Compute Precision: True Positives / (True Positives + False Positives)
+    total_predicted_positives = torch.sum(membership_pred)
+    if total_predicted_positives == 0:
+        precision = 0.0
+    else:
+        precision = torch.sum((membership_pred == 1) & (labels == 1)) / total_predicted_positives
+
+    return tpr, fpr, precision
 
 def compute_evaluation_loss(model, test_dataset, alphas, alpha_index, config, device='cuda'):
     test_loader = DataLoader(test_dataset, batch_size=config['eval_batch_size'], shuffle=False, num_workers=config['num_eval_workers'])
@@ -128,9 +191,10 @@ def compute_evaluation_loss(model, test_dataset, alphas, alpha_index, config, de
     
     # Move the final results to CPU as numpy arrays
     test_loss = quantile_loss(all_predictions, all_targets, alphas).cpu().numpy()
-    test_tpr, test_fpr = compute_tpr_fpr(all_predictions, all_targets, all_labels, alpha_index=alpha_index)
+        
+    test_tpr, test_fpr, test_precision = compute_tpr_fpr(all_predictions, all_targets, all_labels, alpha_index=alpha_index)
 
-    return test_loss, test_tpr, test_fpr
+    return test_loss, test_tpr, test_fpr, test_precision
 
 def train_quantiles(dataset_name, train_dataset, alphas, eval_dataset=None, device="cuda", random_seed=42):
     config = MODEL_CONFIG[f'{dataset_name}_QUANTILE']
@@ -140,6 +204,10 @@ def train_quantiles(dataset_name, train_dataset, alphas, eval_dataset=None, devi
     # Compute the closest alpha value to the target alpha, and update the configuration
     alpha_index = torch.argmin(torch.abs(alphas - config["target_alpha"]))
     config["target_alpha"] = alphas[alpha_index]
+
+    # Define the model and add parameter count to the configuration
+    model = ResNet18(in_channels=6, channel_reduce=config['resnet_channel_reduce'], num_classes=len(alphas), dropout_rate=config['dropout_rate']).to(device)
+    config["model_params"] = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     # Initialize W&B with the configuration
     logger.info("Initializing W&B...")
@@ -153,15 +221,20 @@ def train_quantiles(dataset_name, train_dataset, alphas, eval_dataset=None, devi
     # Create a DataLoader for the training dataset
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, num_workers=config['num_workers'])
 
-    # Define the model TODO: Increase the number of output classes
-    model = ResNet18(in_channels=6, channel_reduce=config['resnet_channel_reduce'], num_classes=len(alphas)).to(device)
-
     # Define the optimizer
     # optim = torch.optim.SGD(model.parameters(), lr=config['lr'], momentum=config['momentum'], weight_decay=config['weight_decay'], nesterov=config['nesterov'])
-    optim = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
+    if config['optimizer'] == 'adam':
+        optim = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
+    elif config['optimizer'] == 'adamw':
+        optim = torch.optim.AdamW(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
     # Define the scheduler
-    scheduler = CosineAnnealingLR(optimizer=optim, T_max=config['n_epochs'])
+    if config['scheduler'] == 'cosine':
+        scheduler = CosineAnnealingLR(optimizer=optim, T_max=config['n_epochs'])
+    elif config['scheduler'] == 'cosine_warm_restarts':
+        scheduler = CosineAnnealingWarmRestarts(optimizer=optim, T_0=10, T_mult=2)
+    else:
+        raise ValueError(f"Invalid scheduler: {config['scheduler']}")
 
     # Move the alpha values to the device
     alphas = torch.tensor(alphas).to(device)
@@ -190,7 +263,7 @@ def train_quantiles(dataset_name, train_dataset, alphas, eval_dataset=None, devi
 
             # Returns a vector of quantiles across several alpha values
             loss = quantile_loss(predictions, targets, alphas)
-            tpr, fpr = compute_tpr_fpr(predictions, targets, labels, alpha_index=alpha_index)
+            tpr, fpr, _ = compute_tpr_fpr(predictions, targets, labels, alpha_index=alpha_index)
 
             # Backward pass
             optim.zero_grad()
@@ -218,8 +291,8 @@ def train_quantiles(dataset_name, train_dataset, alphas, eval_dataset=None, devi
         if eval_dataset:
             model.eval()
             with torch.no_grad():
-                test_loss, test_tpr, test_fpr = compute_evaluation_loss(model, eval_dataset, alphas, alpha_index, config, device=device)
-            wandb.log({"test_loss": test_loss, "test_tpr": test_tpr, "test_fpr": test_fpr})
+                test_loss, test_tpr, test_fpr, test_precision = compute_evaluation_loss(model, eval_dataset, alphas, alpha_index, config, device=device)
+            wandb.log({"test_loss": test_loss, "test_tpr": test_tpr, "test_fpr": test_fpr, "test_precision": test_precision})
 
         logger.info(
             f"Epoch {epoch + 1} Summary:"
@@ -231,6 +304,7 @@ def train_quantiles(dataset_name, train_dataset, alphas, eval_dataset=None, devi
             f"\n    Loss: {test_loss:.4f}"
             f"\n    TPR:  {test_tpr:.4f}"
             f"\n    FPR:  {test_fpr:.4f}"
+            f"\n    Precision: {test_precision:.4f}"
         )
 
     logger.success("Training complete.")
