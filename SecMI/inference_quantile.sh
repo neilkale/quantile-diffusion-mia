@@ -1,0 +1,1 @@
+python3 mia_evals/quantilemia.py --model_dir ./checkpoints/CIFAR10 --data_root ./datasets --dataset cifar10 --t_sec 51 --k 50

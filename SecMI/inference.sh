@@ -1,0 +1,1 @@
+python3 mia_evals/secmia.py --model_dir ./checkpoints/CIFAR10 --data_root ./data/cifar-10-batches-py --dataset cifar10 --t_sec 100 --k 10

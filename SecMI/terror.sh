@@ -1,0 +1,1 @@
+python3 mia_evals/t_errors.py --model_dir ./checkpoints/CIFAR100 --data_root ./datasets --dataset cifar100 --t_sec 50 --k 1 --output_dir ./t_errors/cifar100
