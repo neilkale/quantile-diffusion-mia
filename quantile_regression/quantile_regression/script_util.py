@@ -7,45 +7,13 @@ from .unet import SuperResModel, UNetModel, EncoderUNetModel
 
 NUM_CLASSES = 1000
 
-
-def diffusion_defaults():
-    """
-    Defaults for image and classifier training.
-    """
-    return dict(
-        learn_sigma=False,
-        diffusion_steps=1000,
-        noise_schedule="linear",
-        timestep_respacing="",
-        use_kl=False,
-        predict_xstart=False,
-        rescale_timesteps=False,
-        rescale_learned_sigmas=False,
-    )
-
-
-def classifier_defaults():
-    """
-    Defaults for classifier models.
-    """
-    return dict(
-        image_size=64,
-        classifier_use_fp16=False,
-        classifier_width=128,
-        classifier_depth=2,
-        classifier_attention_resolutions="32,16,8",  # 16
-        classifier_use_scale_shift_norm=True,  # False
-        classifier_resblock_updown=True,  # False
-        classifier_pool="attention",
-    )
-
-
-def model_and_diffusion_defaults():
+def model_defaults():
     """
     Defaults for image training.
     """
     res = dict(
         image_size=64,
+        n_quantiles = 50,
         num_channels=128,
         num_res_blocks=2,
         num_heads=4,

@@ -6,7 +6,6 @@ import argparse
 
 from quantile_regression import dist_util, logger
 from quantile_regression.image_datasets import load_data
-from guided_diffusion.resample import create_named_schedule_sampler
 from quantile_regression.script_util import (
     model_and_diffusion_defaults,
     create_model_and_diffusion,
