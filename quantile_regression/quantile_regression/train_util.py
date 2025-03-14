@@ -24,38 +24,28 @@ class TrainLoop:
         self,
         *,
         model,
-        diffusion,
         data,
         batch_size,
         microbatch,
         lr,
-        ema_rate,
         log_interval,
         save_interval,
         resume_checkpoint,
         use_fp16=False,
         fp16_scale_growth=1e-3,
-        schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
     ):
         self.model = model
-        self.diffusion = diffusion
         self.data = data
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
         self.lr = lr
-        self.ema_rate = (
-            [ema_rate]
-            if isinstance(ema_rate, float)
-            else [float(x) for x in ema_rate.split(",")]
-        )
         self.log_interval = log_interval
         self.save_interval = save_interval
         self.resume_checkpoint = resume_checkpoint
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
-        self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
 

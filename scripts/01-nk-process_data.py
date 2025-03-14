@@ -8,6 +8,11 @@ from PIL import Image
 import pandas as pd
 
 def process_cifar10(name, output_dir):
+    # Clear the output directory if it exists
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
     source_dir = 'data/raw/cifar10/cifar-10-batches-py'
 
     meta_file = os.path.join(source_dir, 'batches.meta')
@@ -33,31 +38,36 @@ def process_cifar10(name, output_dir):
     test_data = test_batch[b'data']  # shape (10000, 3072)
     test_labels = test_batch[b'labels']
 
-    num_train = train_data.shape[0]
+    num_train = train_data.shape[0]  # 50000 images
     indices = list(range(num_train))
     random.shuffle(indices)
-    split = int(0.8 * num_train)
+    split_point = int(0.8 * num_train)  # 40000 for train
 
-    train_idx = indices[:split]
-    val_idx = indices[split:]
-    test_idx = list(range(num_train, num_train+test_data.shape[0]))
+    train_idx = indices[:split_point]   # 40000 indices
+    val_idx = indices[split_point:]       # 10000 indices
+    test_idx = list(range(num_train, num_train + test_data.shape[0]))  # 10000 indices
+
+    # Concatenate training and test data into a single array of 60000 images
     data = np.concatenate([train_data, test_data], axis=0)
 
-    for split, idx in zip(['train', 'val', 'test'], [train_idx, val_idx, test_idx]):
-        split_dir = os.path.join(output_dir, split)
+    # Save images into their respective folders
+    for split_name, idx in zip(['train', 'val', 'test'], [train_idx, val_idx, test_idx]):
+        split_dir = os.path.join(output_dir, split_name)
         os.makedirs(split_dir, exist_ok=True)
         for i in idx:
             img = Image.fromarray(data[i].reshape(3, 32, 32).transpose(1, 2, 0))
             img.save(os.path.join(split_dir, f'{i}.png'))
     
+    # Save label names
     with open(os.path.join(output_dir, 'label_names.txt'), 'w') as f:
         f.write('\n'.join(label_names))
     
-    labels = [train_labels[i] for i in train_idx+val_idx] + test_labels
-    df = pd.DataFrame(train_idx + val_idx + test_idx, columns=['index'])
-    df['label'] = labels
+    # Create a CSV for labels
+    labels = [train_labels[i] for i in train_idx + val_idx] + test_labels
+    all_indices = train_idx + val_idx + test_idx
+    df = pd.DataFrame({'index': all_indices, 'label': labels})
     df.to_csv(os.path.join(output_dir, 'labels.csv'), index=False)
-
+    
 def process_data(dataset, name, traits=None, wnid=None, age_group=None, overwrite=False):
 
     output_dir = f'data/processed/{name}'

@@ -1,3 +1,4 @@
 data/
 models/
 experiments/cifar10_outofdist_qmia/logs/
+experiments/cifar10_outofdist_qmia/t_errors/
