@@ -1,4 +1,6 @@
 data/
 models/
-experiments/cifar10_outofdist_qmia/logs/
-experiments/cifar10_outofdist_qmia/t_errors/
+experiments/cifar10_outofdist_qmia/diffusion_logs/**
+experiments/cifar10_outofdist_qmia/t_errors/**
+experiments/cifar10_outofdist_qmia/qr_logs/**
+experiments/cifar10_outofdist_qmia/qr_results/**
