@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import os
-import pickle
 
 np.random.seed(1111)
 
@@ -21,7 +20,7 @@ t_results = torch.load(folder + 't_results_eval.pt')
 all_classes = t_results['labels']
 
 for i, classes in enumerate(excluded_classes):
-    output_file = f'{folder}t_results_eval_exclude{i}_2000.pt'
+    output_file = f'{folder}t_results_eval_exclude{i}_22500.pt'
     indices = np.isin(all_classes, classes[0], invert=True)
 
     filtered_t_results = {}
@@ -31,10 +30,10 @@ for i, classes in enumerate(excluded_classes):
         else:
             filtered_t_results[key] = [tensor[i] for i in indices]
 
-    # Downsize the filtered results to 2000 samples, evenly distributed across classes
+    # Downsize the filtered results to 22500 samples, evenly distributed across classes
     labels = filtered_t_results['labels'].numpy()
     unique_classes = np.unique(labels)
-    samples_per_class = 2000 // len(unique_classes)    
+    samples_per_class = 22500 // len(unique_classes)    
     
     selected_indices = []
     for cls in unique_classes:
@@ -52,6 +51,3 @@ for i, classes in enumerate(excluded_classes):
 
     torch.save(filtered_t_results, output_file)
     print(f"Saved filtered results to {output_file} excluding classes: {classes[0]}. Total samples: {len(selected_indices)}")
-   
-
-    
