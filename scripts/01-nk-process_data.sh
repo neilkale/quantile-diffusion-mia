@@ -14,6 +14,6 @@
 # process_data --dataset='hda'    --name='hc'         --age_group=-1  
 # process_data --dataset='hda'    --name='ha'         --age_group=4 
 
-python scripts/01-nk-process_data.py --dataset='cifar10'  --name='cifar10' --overwrite
+# python scripts/01-nk-process_data.py --dataset='cifar10'  --name='cifar10' --overwrite
 
-# process_data --dataset='cifar100' --name='cifar100'
+python scripts/01-nk-process_data.py --dataset='cifar100'  --name='cifar100' --overwrite

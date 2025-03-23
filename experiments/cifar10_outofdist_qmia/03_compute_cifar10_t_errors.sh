@@ -8,11 +8,20 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 # --model_dir experiments/cifar10_outofdist_qmia/diffusion_logs/cifar10 \
 # --model_name checkpoint.pt
 
-### TODO: WRITE A SCRIPT FOR CELEBA + ASSOCIATED FILES
-python SecMI/nk-secmia.py --logdir experiments/cifar10_outofdist_qmia/t_errors/celeba/ \
---dataset data/processed/c256/train \
---batch_size 4096 \
---k 10 \
---t_sec 100 \
---model_dir experiments/cifar10_outofdist_qmia/diffusion_logs/cifar10 \
---model_name checkpoint.pt
+# python SecMI/nk-secmia.py --logdir experiments/cifar10_outofdist_qmia/t_errors/celeba/ \
+# --dataset data/processed/c256/train \
+# --batch_size 4096 \
+# --k 10 \
+# --t_sec 100 \
+# --model_dir experiments/cifar10_outofdist_qmia/diffusion_logs/cifar10 \
+# --model_name checkpoint.pt
+
+# python SecMI/nk-secmia.py --logdir experiments/cifar10_outofdist_qmia/t_errors/cifar100/ \
+# --dataset data/processed/cifar100/train \
+# --batch_size 4096 \
+# --k 10 \
+# --t_sec 100 \
+# --model_dir experiments/cifar10_outofdist_qmia/diffusion_logs/cifar10 \
+# --model_name checkpoint.pt
+
+

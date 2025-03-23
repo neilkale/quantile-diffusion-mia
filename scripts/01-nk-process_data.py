@@ -7,6 +7,65 @@ import numpy as np
 from PIL import Image
 import pandas as pd
 
+def process_cifar100(name, output_dir):
+    # Clear the output directory if it exists
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    source_dir = 'data/raw/cifar100/cifar-100-python'
+    meta_file = os.path.join(source_dir, 'meta')
+    with open(meta_file, 'rb') as f:
+        meta = pickle.load(f, encoding='bytes')
+    fine_label_names = [t.decode('utf-8') for t in meta[b'fine_label_names']]
+    coarse_label_names = [t.decode('utf-8') for t in meta[b'coarse_label_names']]
+
+    train_file = os.path.join(source_dir, 'train')
+    with open(train_file, 'rb') as f:
+        train_batch = pickle.load(f, encoding='bytes')
+    data = train_batch[b'data']  # numpy array of shape (50000, 3072)
+    fine_labels = train_batch[b'fine_labels']  # list of 50000 labels
+    coarse_labels = train_batch[b'coarse_labels']  # list of 50000 labels
+
+    test_file = os.path.join(source_dir, 'test')
+    with open(test_file, 'rb') as f:
+        test_batch = pickle.load(f, encoding='bytes')
+    test_data = test_batch[b'data']  # shape (10000, 3072)
+    test_fine_labels = test_batch[b'fine_labels']
+    test_coarse_labels = test_batch[b'coarse_labels']
+
+    num_train = data.shape[0]  # 50000 images
+    indices = list(range(num_train))
+    random.shuffle(indices)
+    split_point = int(0.8 * num_train)  # 40000 for train
+    train_idx = indices[:split_point]   # 40000 indices
+    val_idx = indices[split_point:]       # 10000 indices
+    test_idx = list(range(num_train, num_train + test_data.shape[0]))  # 10000 indices
+
+    # Concatenate training and test data into a single array of 60000 images
+    data = np.concatenate([data, test_data], axis=0)
+
+    # Save images into their respective folders
+    for split_name, idx in zip(['train', 'val', 'test'], [train_idx, val_idx, test_idx]):
+        split_dir = os.path.join(output_dir, split_name)
+        os.makedirs(split_dir, exist_ok=True)
+        for i in idx:
+            img = Image.fromarray(data[i].reshape(3, 32, 32).transpose(1, 2, 0))
+            img.save(os.path.join(split_dir, f'{i}.png'))
+
+    # Save label names
+    with open(os.path.join(output_dir, 'fine_label_names.txt'), 'w') as f:
+        f.write('\n'.join(fine_label_names))
+    with open(os.path.join(output_dir, 'coarse_label_names.txt'), 'w') as f:
+        f.write('\n'.join(coarse_label_names))
+
+    # Create a CSV for labels
+    all_indices = train_idx + val_idx + test_idx
+    labels = [fine_labels[i] for i in train_idx + val_idx] + test_fine_labels
+    df = pd.DataFrame({'index': all_indices, 'fine_label': labels})
+    df['coarse_label'] = [coarse_labels[i] for i in train_idx + val_idx] + test_coarse_labels
+    df.to_csv(os.path.join(output_dir, 'labels.csv'), index=False)
+
 def process_cifar10(name, output_dir):
     # Clear the output directory if it exists
     if os.path.exists(output_dir):
@@ -76,7 +135,6 @@ def process_data(dataset, name, traits=None, wnid=None, age_group=None, overwrit
         return
     else:
         os.makedirs(output_dir, exist_ok=True)
-
     if dataset == 'celeba':
         process_celeba(name=name, traits=traits, output_dir=output_dir)
     elif dataset == 'imagenet':
@@ -85,6 +143,8 @@ def process_data(dataset, name, traits=None, wnid=None, age_group=None, overwrit
         process_hdasynchildfaces(name=name, age_group=age_group, output_dir=output_dir)
     elif dataset == 'cifar10':
         process_cifar10(name=name, output_dir=output_dir)
+    elif dataset == 'cifar100':
+        process_cifar100(name=name, output_dir=output_dir)
     else:
         raise ValueError('Dataset not found')
 

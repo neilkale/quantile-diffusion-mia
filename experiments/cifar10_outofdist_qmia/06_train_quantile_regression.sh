@@ -6,7 +6,17 @@ export CUDA_VISIBLE_DEVICES=4,5,6,7
 # --nonmember_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_eval.pt \
 # --member_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_train.pt \
 # --output_dir experiments/cifar10_outofdist_qmia/qr_logs/cifar10 \
-# --n_epochs 50
+# --n_epochs 200
+# --n_quantiles 50 
+
+# Train a quantile regression model for a subset of CIFAR-10 with 22500 samples drawn from all classes (0 to 9).
+#
+python quantile_regression/train.py \
+--nonmember_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_eval_22500.pt \
+--member_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_train.pt \
+--output_dir experiments/cifar10_outofdist_qmia/qr_logs/cifar10_22500 \
+--n_epochs 200
+--n_quantiles 50 
 
 # Train quantile regression models for CIFAR-10 excluding 0 to 9 randomly selected classes,
 # The training data for each model consists of 2000 samples evenly distributed across the remaining classes.
@@ -35,9 +45,19 @@ export CUDA_VISIBLE_DEVICES=4,5,6,7
 # done
 
 # Train a quantile regression model for CIFAR-10 using CelebA as the nonmember data.
+#
+# python quantile_regression/train.py \
+# --nonmember_data_path experiments/cifar10_outofdist_qmia/t_errors/celeba/t_results.pt \
+# --member_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_train.pt \
+# --output_dir experiments/cifar10_outofdist_qmia/qr_logs/cifar10_on_celeba \
+# --n_epochs 200 \
+# --n_quantiles 100
+
+# Train a quantile regression model for CIFAR-10 using CIFAR-100 as the nonmember data.
 # 
-python quantile_regression/train.py \
---nonmember_data_path experiments/cifar10_outofdist_qmia/t_errors/celeba/t_results.pt \
---member_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_train.pt \
---output_dir experiments/cifar10_outofdist_qmia/qr_logs/cifar10_on_celeba \
---n_epochs 50
+# python quantile_regression/train.py \
+# --nonmember_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar100/t_results.pt \
+# --member_data_path experiments/cifar10_outofdist_qmia/t_errors/cifar10/t_results_train.pt \
+# --output_dir experiments/cifar10_outofdist_qmia/qr_logs/cifar10_on_cifar100 \
+# --n_epochs 200
+

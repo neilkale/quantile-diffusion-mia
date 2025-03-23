@@ -14,6 +14,7 @@ from torchvision.datasets import CIFAR10
 import torch.nn.functional as F
 
 import argparse
+import matplotlib.pyplot as plt
 
 SECMI_EVALS_BASE='SecMI/mia_evals/'
 
@@ -60,6 +61,7 @@ all_test_labels = torch.concat((member_labels, test_labels), axis=0)
 device = "cuda"
 membership_labels = torch.from_numpy(membership_labels).to(device)
 
+
 alphas = torch.logspace(-5, 0, args.n_quantiles, base=10).to(device)
 #
 #
@@ -89,6 +91,21 @@ def pinball_loss(outputs, targets, alphas):
     diff = outputs - targets
     alphas = alphas.view(1, -1)
     losses = torch.max(alphas * diff, (alphas-1)*diff)
+    return losses.sum(-1).mean()
+
+# A variation of the pinball loss function that aims to improve loss convergence
+def pinball_loss(outputs, targets, alphas):
+    diff = outputs - targets
+    alphas = alphas.view(1, -1)
+
+    target_quantile, sigma_log = 0.01, 0.5
+    target_q_tensor = torch.tensor(target_quantile, dtype=alphas.dtype, device=alphas.device)
+    weights = torch.exp(-0.5 * ((torch.log(alphas) - torch.log(target_q_tensor)) / sigma_log) ** 2)
+
+
+    losses = torch.max(alphas * diff, (alphas-1)*diff)
+    losses = weights * losses
+    
     return losses.sum(-1).mean()
 
 def tpr_and_fpr(predictions, membership_labels):
@@ -130,6 +147,10 @@ cifar10_transform_test = v2.Compose([
 def distance(diffusions, internal_samples):
     return torch.log10((diffusions - internal_samples).pow(2).sum(dim=(1,2,3))).view(-1, 1)
 #
+
+train_loss_history = []
+test_loss_history = []
+tpr_at_fpr_history = []
 
 for epoch in range(args.n_epochs):
     model.train()
@@ -191,17 +212,50 @@ for epoch in range(args.n_epochs):
             all_outputs.append(outputs)
             all_targets.append(targets.view(-1, 1))
             loss += pinball_loss(outputs, targets, alphas)*inputs.size(0)
-        loss /= len(train_loader.dataset)
+        loss /= len(test_loader.dataset)
         print(f'Epoch {epoch+1}, Test Loss: {loss.item():.4f}')
         
     all_predictions = torch.cat(all_outputs) <= torch.cat(all_targets)
+    tpr_list, fpr_list = [], []
     for predictions in all_predictions.T:
         tpr, fpr = tpr_and_fpr(predictions, membership_labels)
+        tpr_list.append(tpr.item())
+        fpr_list.append(fpr.item())
         print(f'Epoch {epoch+1}, TPR: {tpr.item():.4f}, FPR: {fpr.item():.4f}')
 
     scheduler.step()
 
+    train_loss_history.append(running_loss)
+    test_loss_history.append(loss.item())
+
+    epoch_list = list(range(1, epoch + 2))
+    plt.figure()
+    plt.plot(epoch_list, train_loss_history, label='Train Loss')
+    plt.plot(epoch_list, test_loss_history, label='Test Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Training vs Test Loss')
+    plt.savefig(f"{args.output_dir}/loss_plot.png")
+    plt.close()
+
+    # Find the quantile index where the FPR is closest to 0.01
+    fpr_array = np.array(fpr_list)
+    idx = np.argmin(np.abs(fpr_array - 0.01))
+    tpr_at_fpr = tpr_list[idx]        
+    tpr_at_fpr_history.append(tpr_at_fpr)
+
+    # At the final epoch, plot the history of TPR at FPR ~ 0.01
+    plt.figure()
+    plt.plot(epoch_list, tpr_at_fpr_history, marker='o')
+    plt.xlabel("Epoch")
+    plt.ylabel("TPR at FPR ≈ 0.01")
+    plt.title("TPR at FPR ≈ 0.01 Over Epochs")
+    plt.savefig(f"{args.output_dir}/tpr_at_fpr_plot.png")
+    plt.close()
+
 
 import os
+import numpy as np
 os.makedirs(args.output_dir, exist_ok=True)
 torch.save(model.state_dict(), os.path.join(args.output_dir, f'model_epoch_{epoch+1}.pth'))
