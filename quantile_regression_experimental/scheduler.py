@@ -3,6 +3,14 @@ import math
 
 class CosineAnnealingWarmRestartsWithDecay(_LRScheduler):
     def __init__(self, optimizer, T_0, T_mult=1, eta_min=0, decay_factor=0.9, min_base_lr=0, last_epoch=-1):
+        '''
+        T_0: number of iterations for the first cycle
+        T_mult: factor by which to increase the cycle length after each cycle
+        eta_min: minimum learning rate at the end of the cycle
+        decay_factor: factor by which to decay the base learning rates at the end of each cycle
+        min_base_lr: minimum base learning rate after decay
+        last_epoch: the index of the last epoch. Default is -1, which means the scheduler is initialized for the first epoch.
+        '''
         self.T_0 = T_0
         self.T_mult = T_mult
         self.eta_min = eta_min

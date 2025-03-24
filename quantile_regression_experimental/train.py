@@ -69,14 +69,16 @@ if args.class_cond:
     in_channels = args.in_channel + args.num_classes
 else:
     in_channels = args.in_channel
-model = ResNet18(num_classes=len(alphas), in_channels = in_channels).to(device)
+model = ResNet18(num_classes=len(alphas), in_channels = in_channels, channel_reduce=16).to(device)
 
 print()
 
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, fused=True)
+# optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, fused=True)
+optimizer = torch.optim.RAdam(model.parameters(), lr=args.lr)
 #
 #
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
+# scheduler = CosineAnnealingWarmRestartsWithDecay(optimizer, T_0=10, T_mult=1, eta_min=1e-2, last_epoch=-1)
 
 train_loader = DataLoader(
     TensorDataset(train_diffusions, train_internal_samples, train_images, train_labels),
@@ -87,11 +89,14 @@ test_loader = DataLoader(
     batch_size=args.batch_size*10,
     shuffle=False)
 
-def pinball_loss(outputs, targets, alphas):
-    diff = outputs - targets
-    alphas = alphas.view(1, -1)
-    losses = torch.max(alphas * diff, (alphas-1)*diff)
-    return losses.sum(-1).mean()
+import os
+os.makedirs(args.output_dir, exist_ok=True)
+
+# def pinball_loss(outputs, targets, alphas):
+#     diff = outputs - targets
+#     alphas = alphas.view(1, -1)
+#     losses = torch.max(alphas * diff, (alphas-1)*diff)
+#     return losses.sum(-1).mean()
 
 # A variation of the pinball loss function that aims to improve loss convergence
 def pinball_loss(outputs, targets, alphas):
@@ -102,11 +107,23 @@ def pinball_loss(outputs, targets, alphas):
     target_q_tensor = torch.tensor(target_quantile, dtype=alphas.dtype, device=alphas.device)
     weights = torch.exp(-0.5 * ((torch.log(alphas) - torch.log(target_q_tensor)) / sigma_log) ** 2)
 
-
     losses = torch.max(alphas * diff, (alphas-1)*diff)
     losses = weights * losses
     
     return losses.sum(-1).mean()
+
+def pinball_loss_elementwise(outputs, targets, alphas):
+    diff = outputs - targets
+    alphas = alphas.view(1, -1)
+
+    target_quantile, sigma_log = 0.01, 0.5
+    target_q_tensor = torch.tensor(target_quantile, dtype=alphas.dtype, device=alphas.device)
+    weights = torch.exp(-0.5 * ((torch.log(alphas) - torch.log(target_q_tensor)) / sigma_log) ** 2)
+
+    losses = torch.max(alphas * diff, (alphas-1)*diff)
+    losses = weights * losses
+    
+    return losses.sum(-1)
 
 def tpr_and_fpr(predictions, membership_labels):
     #
@@ -149,8 +166,11 @@ def distance(diffusions, internal_samples):
 #
 
 train_loss_history = []
-test_loss_history = []
+nonmember_test_loss_history = []
+member_test_loss_history = []
 tpr_at_fpr_history = []
+fpr_history = []
+lrs = []
 
 for epoch in range(args.n_epochs):
     model.train()
@@ -183,7 +203,7 @@ for epoch in range(args.n_epochs):
     running_loss /= len(train_loader.dataset)
     print(f'Epoch {epoch+1}, Training Loss: {running_loss:.4f}')
 
-    loss = 0.
+    loss = []
     all_outputs = []
     all_targets = []
     
@@ -206,14 +226,14 @@ for epoch in range(args.n_epochs):
             #
             targets = -distance(diffusions, internal_samples)
             outputs = model(inputs)
+            loss.append(pinball_loss_elementwise(outputs, targets, alphas))
 
-            loss = pinball_loss(outputs, targets, alphas)
-            
             all_outputs.append(outputs)
             all_targets.append(targets.view(-1, 1))
-            loss += pinball_loss(outputs, targets, alphas)*inputs.size(0)
-        loss /= len(test_loader.dataset)
-        print(f'Epoch {epoch+1}, Test Loss: {loss.item():.4f}')
+        loss = torch.cat(loss)
+        nonmember_test_loss = loss[membership_labels == 0].mean()
+        member_test_loss = loss[membership_labels == 1].mean()
+        print(f'Epoch {epoch+1}, Test Loss: {nonmember_test_loss.item():.4f}')
         
     all_predictions = torch.cat(all_outputs) <= torch.cat(all_targets)
     tpr_list, fpr_list = [], []
@@ -226,14 +246,18 @@ for epoch in range(args.n_epochs):
     scheduler.step()
 
     train_loss_history.append(running_loss)
-    test_loss_history.append(loss.item())
+    nonmember_test_loss_history.append(nonmember_test_loss.item())
+    member_test_loss_history.append(member_test_loss.item())
 
     epoch_list = list(range(1, epoch + 2))
     plt.figure()
-    plt.plot(epoch_list, train_loss_history, label='Train Loss')
-    plt.plot(epoch_list, test_loss_history, label='Test Loss')
+    plt.plot(epoch_list, train_loss_history, label='Train Loss', marker='o', color='steelblue')
+    plt.plot(epoch_list, nonmember_test_loss_history, label='Nonmember Test Loss', marker='o', color='indianred')
+    plt.plot(epoch_list, member_test_loss_history, label='Member Test Loss', marker='o', color='forestgreen')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
+    plt.ylim(0, 2)
+    plt.xticks(epoch_list)
     plt.legend()
     plt.title('Training vs Test Loss')
     plt.savefig(f"{args.output_dir}/loss_plot.png")
@@ -242,20 +266,32 @@ for epoch in range(args.n_epochs):
     # Find the quantile index where the FPR is closest to 0.01
     fpr_array = np.array(fpr_list)
     idx = np.argmin(np.abs(fpr_array - 0.01))
-    tpr_at_fpr = tpr_list[idx]        
+    tpr_at_fpr = tpr_list[idx]
+    fpr = fpr_array[idx]        
     tpr_at_fpr_history.append(tpr_at_fpr)
+    fpr_history.append(fpr)
 
-    # At the final epoch, plot the history of TPR at FPR ~ 0.01
+    # At the epoch, plot the history of TPR at FPR ~ 0.01
     plt.figure()
-    plt.plot(epoch_list, tpr_at_fpr_history, marker='o')
+    plt.plot(epoch_list, tpr_at_fpr_history, label='TPR', marker='o', color='steelblue')
+    plt.plot(epoch_list, fpr_history, label='FPR', marker='o', color='slategrey')
+    plt.legend()
     plt.xlabel("Epoch")
     plt.ylabel("TPR at FPR ≈ 0.01")
     plt.title("TPR at FPR ≈ 0.01 Over Epochs")
+    plt.ylim(0, 1)
+    plt.xticks(epoch_list)
     plt.savefig(f"{args.output_dir}/tpr_at_fpr_plot.png")
     plt.close()
 
+    # Plot the learning rate schedule
+    lrs.append(optimizer.param_groups[0]['lr'])
+    plt.figure()
+    plt.plot(epoch_list, lrs, marker='o')
+    plt.xlabel("Epoch")
+    plt.ylabel("Learning Rate")
+    plt.title("Learning Rate Schedule")
+    plt.savefig(f"{args.output_dir}/lr_schedule_plot.png")
+    plt.close()
 
-import os
-import numpy as np
-os.makedirs(args.output_dir, exist_ok=True)
 torch.save(model.state_dict(), os.path.join(args.output_dir, f'model_epoch_{epoch+1}.pth'))
