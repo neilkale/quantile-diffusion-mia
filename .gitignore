@@ -8,3 +8,5 @@ experiments/cifar10_improving_qmia/diffusion_logs/**
 experiments/cifar10_improving_qmia/t_errors/**
 experiments/cifar10_improving_qmia/qr_logs/**
 experiments/cifar10_improving_qmia/qr_results/**
+experiments/cifar10_mia_classifier/logs/**
+experiments/cifar10_mia_classifier/t_errors/**

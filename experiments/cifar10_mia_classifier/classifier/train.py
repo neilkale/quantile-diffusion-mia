@@ -3,6 +3,7 @@ from resnet import ResNet18, ResNet34, ResNet50
 from scheduler import CosineAnnealingWarmRestartsWithDecay
 import torch.nn as nn
 import numpy as np
+import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
@@ -14,7 +15,6 @@ from torchvision.datasets import CIFAR10
 import torch.nn.functional as F
 
 import argparse
-import matplotlib.pyplot as plt
 
 SECMI_EVALS_BASE='SecMI/mia_evals/'
 
@@ -24,7 +24,6 @@ parser.add_argument('--random_seed', type=int, default=0)
 parser.add_argument('--lr', type=float, default=1e-1)
 parser.add_argument('--n_epochs', type=int, default=200)
 parser.add_argument('--batch_size', type=int, default=128)
-parser.add_argument('--n_quantiles', type=int, default=50)
 parser.add_argument('--nonmember_data_path', type=str, default=None)
 parser.add_argument('--member_data_path', type=str, default=None)
 parser.add_argument('--output_dir', type=str, default='./models/')
@@ -49,81 +48,52 @@ member_diffusions = member_data['diffusions'].cpu()
 member_internal_samples = member_data['internal_samples'].cpu()
 member_labels = member_data['labels'].cpu()
 
-train_diffusions, test_diffusions, train_internal_samples, test_internal_samples, train_images, test_images, train_labels, test_labels \
+nm_train_diffusions, nm_test_diffusions, nm_train_internal_samples, nm_test_internal_samples, nm_train_images, nm_test_images, nm_train_labels, nm_test_labels \
     = train_test_split(nonmember_diffusions, nonmember_internal_samples, nonmember_images, nonmember_labels, test_size=0.2, random_state=42)
 
-all_test_diffusions = torch.concat((member_diffusions, test_diffusions), axis=0)
-all_test_internal_samples = torch.concat((member_internal_samples, test_internal_samples), axis=0)
-membership_labels = np.concatenate((np.ones(len(member_diffusions)), np.zeros(len(test_diffusions))), axis=0)
-all_test_images = torch.concat((member_images, test_images), axis=0)
-all_test_labels = torch.concat((member_labels, test_labels), axis=0)
+m_train_diffusions, m_test_diffusions, m_train_internal_samples, m_test_internal_samples, m_train_images, m_test_images, m_train_labels, m_test_labels \
+    = train_test_split(member_diffusions, member_internal_samples, member_images, member_labels, test_size=0.2, random_state=42)
+
+all_train_diffusions = torch.concat((nm_train_diffusions, m_train_diffusions), axis=0)
+all_train_internal_samples = torch.concat((nm_train_internal_samples, m_train_internal_samples), axis=0)
+all_train_images = torch.concat((nm_train_images, m_train_images), axis=0)
+all_train_labels = torch.concat((nm_train_labels, m_train_labels), axis=0)
+train_membership_labels = np.concatenate((np.zeros(len(nm_train_diffusions)), np.ones(len(m_train_diffusions))), axis=0).astype(np.int64)
+train_membership_labels = np.eye(2)[train_membership_labels]
+
+all_test_diffusions = torch.concat((nm_test_diffusions, m_test_diffusions), axis=0)
+all_test_internal_samples = torch.concat((nm_test_internal_samples, m_test_internal_samples), axis=0)
+all_test_images = torch.concat((nm_test_images, m_test_images), axis=0)
+all_test_labels = torch.concat((nm_test_labels, m_test_labels), axis=0)
+test_membership_labels = np.concatenate((np.zeros(len(nm_test_diffusions)), np.ones(len(m_test_diffusions))), axis=0).astype(np.int64)
+test_membership_labels = np.eye(2)[test_membership_labels]
 
 device = "cuda"
-membership_labels = torch.from_numpy(membership_labels).to(device)
-
-
-alphas = torch.logspace(-5, 0, args.n_quantiles, base=10).to(device)
+test_membership_labels = torch.from_numpy(test_membership_labels).to(device)
+train_membership_labels = torch.from_numpy(train_membership_labels).to(device)
 #
 #
 if args.class_cond:
     in_channels = args.in_channel + args.num_classes
 else:
     in_channels = args.in_channel
-model = ResNet50(num_classes=len(alphas), in_channels = in_channels).to(device)
+model = ResNet18(num_classes=2, in_channels = in_channels).to(device)
 
 print()
 
-# optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, fused=True)
-optimizer = torch.optim.RAdam(model.parameters(), lr=args.lr)
+optimizer = torch.optim.RAdam(model.parameters(), lr=args.lr, weight_decay=1e-4)
 #
 #
-# scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
-# scheduler = CosineAnnealingWarmRestartsWithDecay(optimizer, T_0=10, T_mult=1, eta_min=1e-2, last_epoch=-1)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.n_epochs)
 
 train_loader = DataLoader(
-    TensorDataset(train_diffusions, train_internal_samples, train_images, train_labels),
+    TensorDataset(all_train_diffusions, all_train_internal_samples, all_train_images, all_train_labels, train_membership_labels),
     batch_size = args.batch_size,
     shuffle = True)
 test_loader = DataLoader(
-    TensorDataset(all_test_diffusions, all_test_internal_samples, all_test_images, all_test_labels),
+    TensorDataset(all_test_diffusions, all_test_internal_samples, all_test_images, all_test_labels, test_membership_labels),
     batch_size=args.batch_size*10,
     shuffle=False)
-
-import os
-os.makedirs(args.output_dir, exist_ok=True)
-
-# def pinball_loss(outputs, targets, alphas):
-#     diff = outputs - targets
-#     alphas = alphas.view(1, -1)
-#     losses = torch.max(alphas * diff, (alphas-1)*diff)
-#     return losses.sum(-1).mean()
-
-# A variation of the pinball loss function that aims to improve loss convergence
-def pinball_loss(outputs, targets, alphas):
-    diff = outputs - targets
-    alphas = alphas.view(1, -1)
-
-    target_quantile, sigma_log = 0.01, 0.5
-    target_q_tensor = torch.tensor(target_quantile, dtype=alphas.dtype, device=alphas.device)
-    weights = torch.exp(-0.5 * ((torch.log(alphas) - torch.log(target_q_tensor)) / sigma_log) ** 2)
-
-    losses = torch.max(alphas * diff, (alphas-1)*diff)
-    losses = weights * losses
-    
-    return losses.sum(-1).mean()
-
-def pinball_loss_elementwise(outputs, targets, alphas):
-    diff = outputs - targets
-    alphas = alphas.view(1, -1)
-
-    target_quantile, sigma_log = 0.01, 0.5
-    target_q_tensor = torch.tensor(target_quantile, dtype=alphas.dtype, device=alphas.device)
-    weights = torch.exp(-0.5 * ((torch.log(alphas) - torch.log(target_q_tensor)) / sigma_log) ** 2)
-
-    losses = torch.max(alphas * diff, (alphas-1)*diff)
-    losses = weights * losses
-    
-    return losses.sum(-1)
 
 def tpr_and_fpr(predictions, membership_labels):
     #
@@ -140,8 +110,9 @@ def tpr_and_fpr(predictions, membership_labels):
 
     true_positive_rate = true_positive / denominator_tpr if denominator_tpr != 0 else 0.0
     false_positive_rate = false_positive / denominator_fpr if denominator_fpr != 0 else 0.0
+    precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) != 0 else 0.0
 
-    return true_positive_rate, false_positive_rate
+    return true_positive_rate, false_positive_rate, precision
 
 cifar10_transform_train = v2.Compose([
     v2.RandomCrop(32, padding=4),
@@ -161,21 +132,24 @@ cifar10_transform_test = v2.Compose([
     #
 ])
 
-def distance(diffusions, internal_samples):
-    return torch.log10((diffusions - internal_samples).pow(2).sum(dim=(1,2,3))).view(-1, 1)
+# def distance(diffusions, internal_samples):
+    # return torch.log10((diffusions - internal_samples).pow(2).sum(dim=(1,2,3))).view(-1, 1)
 #
 
 train_loss_history = []
-nonmember_test_loss_history = []
-member_test_loss_history = []
-tpr_at_fpr_history = []
+test_loss_history = []
+tpr_history = []
 fpr_history = []
+precision_history = []
 lrs = []
+
+import os
+os.makedirs(args.output_dir, exist_ok=True)
 
 for epoch in range(args.n_epochs):
     model.train()
     running_loss = 0
-    for i, (diffusions, internal_samples, images, labels) in enumerate(train_loader):
+    for i, (diffusions, internal_samples, images, labels, membership) in enumerate(train_loader):
         optimizer.zero_grad()
 
         diffusions = diffusions.to(device)
@@ -192,24 +166,24 @@ for epoch in range(args.n_epochs):
             inputs = torch.cat((images, diffusions, internal_samples), dim=1)
 
         #
-        targets = -distance(diffusions, internal_samples)
+        targets = membership
         outputs = model(inputs)
         #
-        loss = pinball_loss(outputs, targets, alphas)
-        running_loss += loss.item() * len(labels)
+        loss = F.binary_cross_entropy_with_logits(outputs, targets, reduction='sum')
+        running_loss += loss.item()
         loss.backward()
         optimizer.step()
 
     running_loss /= len(train_loader.dataset)
     print(f'Epoch {epoch+1}, Training Loss: {running_loss:.4f}')
-
-    loss = []
+    
+    loss = 0
     all_outputs = []
     all_targets = []
     
     model.eval()
     with torch.no_grad():
-        for i, (diffusions, internal_samples, images, labels) in enumerate(test_loader):
+        for i, (diffusions, internal_samples, images, labels, membership) in enumerate(test_loader):
             diffusions = diffusions.to(device)
             internal_samples = internal_samples.to(device)
             images = cifar10_transform_test(images).to(device)
@@ -224,36 +198,34 @@ for epoch in range(args.n_epochs):
                 inputs = torch.cat((images, diffusions, internal_samples), dim=1)
             
             #
-            targets = -distance(diffusions, internal_samples)
+            targets = membership
             outputs = model(inputs)
-            loss.append(pinball_loss_elementwise(outputs, targets, alphas))
+            batch_loss = F.binary_cross_entropy_with_logits(outputs, targets, reduction='sum')
+            loss += batch_loss.item()
 
             all_outputs.append(outputs)
-            all_targets.append(targets.view(-1, 1))
-        loss = torch.cat(loss)
-        nonmember_test_loss = loss[membership_labels == 0].mean()
-        member_test_loss = loss[membership_labels == 1].mean()
-        print(f'Epoch {epoch+1}, Test Loss: {nonmember_test_loss.item():.4f}')
-        
-    all_predictions = torch.cat(all_outputs) <= torch.cat(all_targets)
-    tpr_list, fpr_list = [], []
-    for predictions in all_predictions.T:
-        tpr, fpr = tpr_and_fpr(predictions, membership_labels)
-        tpr_list.append(tpr.item())
-        fpr_list.append(fpr.item())
-        print(f'Epoch {epoch+1}, TPR: {tpr.item():.4f}, FPR: {fpr.item():.4f}')
+            all_targets.append(targets)
+    
+    loss /= len(test_loader.dataset)
 
-    # scheduler.step()
+    all_predictions = torch.cat(all_outputs).sigmoid().cpu()
+    membership_labels = torch.cat(all_targets).cpu()
+
+    tpr, fpr, precision = tpr_and_fpr(torch.argmax(all_predictions, dim=1), torch.argmax(membership_labels, dim=1))
+    print(f'Epoch {epoch+1}, Test Loss: {loss:.4f}, TPR: {tpr:.4f}, FPR: {fpr:.4f}')
+
+    scheduler.step()
 
     train_loss_history.append(running_loss)
-    nonmember_test_loss_history.append(nonmember_test_loss.item())
-    member_test_loss_history.append(member_test_loss.item())
+    test_loss_history.append(loss)
+    tpr_history.append(tpr)
+    fpr_history.append(fpr)
+    precision_history.append(precision)
 
     epoch_list = list(range(1, epoch + 2))
     plt.figure()
     plt.plot(epoch_list, train_loss_history, label='Train Loss', marker='o', color='steelblue', markersize=2)
-    plt.plot(epoch_list, nonmember_test_loss_history, label='Nonmember Test Loss', marker='o', color='indianred', markersize=2)
-    plt.plot(epoch_list, member_test_loss_history, label='Member Test Loss', marker='o', color='forestgreen', markersize=2)
+    plt.plot(epoch_list, test_loss_history, label='Test Loss', marker='o', color='peru', markersize=2)
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.yscale('log')
@@ -262,22 +234,15 @@ for epoch in range(args.n_epochs):
     plt.savefig(f"{args.output_dir}/loss_plot.png")
     plt.close()
 
-    # Find the quantile index where the FPR is closest to 0.01
-    fpr_array = np.array(fpr_list)
-    idx = np.argmin(np.abs(fpr_array - 0.01))
-    tpr_at_fpr = tpr_list[idx]
-    fpr = fpr_array[idx]        
-    tpr_at_fpr_history.append(tpr_at_fpr)
-    fpr_history.append(fpr)
-
     # At the epoch, plot the history of TPR at FPR ~ 0.01
     plt.figure()
-    plt.plot(epoch_list, tpr_at_fpr_history, label='TPR', marker='o', color='steelblue', markersize=2)
-    plt.plot(epoch_list, fpr_history, label='FPR', marker='o', color='slategrey', markersize=2)
+    plt.plot(epoch_list, tpr_history, label='TPR', marker='o', color='forestgreen', markersize=2)
+    plt.plot(epoch_list, fpr_history, label='FPR', marker='o', color='indianred', markersize=2)
+    plt.plot(epoch_list, precision_history, label='Precision', marker='o', color='steelblue', markersize=2)
     plt.legend()
     plt.xlabel("Epoch")
-    plt.ylabel("TPR at FPR ≈ 0.01")
-    plt.title("TPR at FPR ≈ 0.01 Over Epochs")
+    plt.ylabel("Rate")
+    plt.title("Validation Metrics Over Epochs")
     plt.savefig(f"{args.output_dir}/tpr_at_fpr_plot.png")
     plt.close()
 
